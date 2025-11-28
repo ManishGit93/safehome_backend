@@ -36,7 +36,7 @@ router.post("/signup", async (req, res, next) => {
     const token = signJwt(user);
     res.cookie(config.cookieName, token, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: config.env === "production" ? "none" : "lax",
       secure: config.env === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -78,7 +78,7 @@ router.post("/login", async (req, res, next) => {
     const token = signJwt(user);
     res.cookie(config.cookieName, token, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: config.env === "production" ? "none" : "lax",
       secure: config.env === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });

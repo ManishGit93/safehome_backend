@@ -9,7 +9,7 @@ export const attachCsrfCookie = (res: Response, token?: string) => {
 
   res.cookie(config.csrfCookieName, value, {
     httpOnly: false,
-    sameSite: "lax",
+    sameSite: config.env === "production" ? "none" : "lax",
     secure: config.env === "production",
   });
 
