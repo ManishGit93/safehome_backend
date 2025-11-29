@@ -48,7 +48,17 @@ router.get("/pending", requireRole("child"), async (req, res) => {
     "parentId",
     "name email",
   );
-  return res.json({ links });
+  
+  // Debug: Also return all links for this child to help troubleshoot
+  const allLinks = await ParentChildLinkModel.find({ childId: user._id });
+  
+  return res.json({ 
+    links,
+    debug: {
+      totalLinks: allLinks.length,
+      linkStatuses: allLinks.map(l => ({ id: l._id, status: l.status }))
+    }
+  });
 });
 
 const linkActionSchema = z.object({

@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { LatestLocationModel } from "../models/LatestLocation";
 import { LocationPingModel } from "../models/LocationPing";
 import { ParentChildLinkModel } from "../models/ParentChildLink";
+import { UserModel } from "../models/User";
 import { recordAudit } from "../services/auditService";
 
 const router = Router();
@@ -60,14 +61,27 @@ router.get("/:childId/locations", requireAuth, async (req, res, next) => {
     const requester = req.user!;
     const childObjectId = new Types.ObjectId(childId);
 
+    let link = null;
     if (requester.role === "parent") {
-      const link = await ParentChildLinkModel.findOne({
+      link = await ParentChildLinkModel.findOne({
         parentId: requester._id,
         childId: childObjectId,
-        status: "ACCEPTED",
       });
+      
       if (!link) {
         throw createHttpError(403, "Not linked to this child");
+      }
+      
+      if (link.status !== "ACCEPTED") {
+        return res.json({ 
+          pings: [],
+          error: `Link exists but status is "${link.status}". Link must be ACCEPTED.`,
+          debug: {
+            linkId: link._id,
+            linkStatus: link.status,
+            childId: childId
+          }
+        });
       }
     } else if (requester.role === "child" && requester._id.toString() !== childId) {
       throw createHttpError(403, "Cannot view another child");
@@ -83,6 +97,10 @@ router.get("/:childId/locations", requireAuth, async (req, res, next) => {
       .sort({ ts: -1 })
       .limit(500);
 
+    // Check if child has given consent
+    const child = await UserModel.findById(childObjectId);
+    const hasConsent = child?.consentGiven ?? false;
+
     await recordAudit({
       actorId: requester._id,
       actorRole: requester.role,
@@ -91,7 +109,15 @@ router.get("/:childId/locations", requireAuth, async (req, res, next) => {
       meta: { count: pings.length },
     });
 
-    return res.json({ pings });
+    return res.json({ 
+      pings,
+      debug: {
+        totalPings: pings.length,
+        dateRange: { from, to },
+        childConsentGiven: hasConsent,
+        linkStatus: link?.status
+      }
+    });
   } catch (error) {
     return next(error);
   }
