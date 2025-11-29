@@ -62,19 +62,42 @@ const handleChildSocket = (socket: SafeSocket, io: SocketIOServer) => {
   const childId = socket.data.user._id.toString();
   socket.join(childRoom(childId));
 
+  console.log(`[Socket] Child connected: ${childId} (${socket.data.user.name})`);
+
   socket.on("location:update", async (rawPayload, ack?: (response: unknown) => void) => {
     try {
+      console.log(`[Socket] Location update received from child ${childId}`, {
+        rawPayload,
+        timestamp: new Date().toISOString()
+      });
+
       const payload = locationSchema.parse(rawPayload);
+      
       if (payload.userId !== childId) {
+        console.warn(`[Socket] User mismatch: expected ${childId}, got ${payload.userId}`);
         throw createHttpError(403, "User mismatch");
       }
 
       const mongoId = new Types.ObjectId(payload.userId);
 
       const childUser = await UserModel.findById(mongoId);
-      if (!childUser?.consentGiven) {
+      if (!childUser) {
+        console.error(`[Socket] Child user not found: ${payload.userId}`);
+        throw createHttpError(404, "Child user not found");
+      }
+
+      if (!childUser.consentGiven) {
+        console.warn(`[Socket] Consent not given for child ${childId}`);
         throw createHttpError(403, "Consent required before sending location");
       }
+
+      console.log(`[Socket] Saving location ping for child ${childId}`, {
+        lat: payload.lat,
+        lng: payload.lng,
+        accuracy: payload.accuracy,
+        ts: payload.ts
+      });
+
       await saveLocationPing({
         userId: mongoId,
         lat: payload.lat,
@@ -85,11 +108,21 @@ const handleChildSocket = (socket: SafeSocket, io: SocketIOServer) => {
         ts: new Date(payload.ts),
       });
 
+      console.log(`[Socket] Location ping saved successfully for child ${childId}`);
+
       io.to(childRoom(childId)).emit("location:push", payload);
-      ack?.({ ok: true });
+      ack?.({ ok: true, message: "Location saved successfully" });
     } catch (error) {
-      console.error("Failed to process location payload", error);
-      ack?.({ error: (error as Error).message });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[Socket] Failed to process location payload for child ${childId}:`, {
+        error: errorMessage,
+        rawPayload,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      ack?.({ 
+        error: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      });
     }
   });
 };
