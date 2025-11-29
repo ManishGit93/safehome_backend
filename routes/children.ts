@@ -54,6 +54,72 @@ const historySchema = z.object({
   to: z.coerce.date().optional(),
 });
 
+// Debug endpoint to check child's location tracking status
+router.get("/:childId/status", requireAuth, async (req, res, next) => {
+  try {
+    const { childId } = req.params;
+    const requester = req.user!;
+    const childObjectId = new Types.ObjectId(childId);
+
+    if (requester.role === "parent") {
+      const link = await ParentChildLinkModel.findOne({
+        parentId: requester._id,
+        childId: childObjectId,
+      });
+      if (!link) {
+        throw createHttpError(403, "Not linked to this child");
+      }
+    } else if (requester.role === "child" && requester._id.toString() !== childId) {
+      throw createHttpError(403, "Cannot view another child");
+    }
+
+    const child = await UserModel.findById(childObjectId);
+    const link = await ParentChildLinkModel.findOne({
+      childId: childObjectId,
+    });
+    const latestLocation = await LatestLocationModel.findOne({ userId: childObjectId });
+    const totalPings = await LocationPingModel.countDocuments({ userId: childObjectId });
+    const recentPings = await LocationPingModel.find({ userId: childObjectId })
+      .sort({ ts: -1 })
+      .limit(5);
+
+    return res.json({
+      child: {
+        id: child?._id,
+        name: child?.name,
+        email: child?.email,
+        consentGiven: child?.consentGiven,
+      },
+      link: link ? {
+        id: link._id,
+        status: link.status,
+        parentId: link.parentId,
+      } : null,
+      location: {
+        hasLatestLocation: !!latestLocation,
+        latestLocation: latestLocation ? {
+          lat: latestLocation.lat,
+          lng: latestLocation.lng,
+          ts: latestLocation.ts,
+        } : null,
+        totalPings,
+        recentPings: recentPings.map(p => ({
+          lat: p.lat,
+          lng: p.lng,
+          ts: p.ts,
+        })),
+      },
+      recommendations: {
+        needsConsent: !child?.consentGiven,
+        needsLinkAcceptance: link?.status !== "ACCEPTED",
+        needsLocationUpdates: totalPings === 0 && child?.consentGiven && link?.status === "ACCEPTED",
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/:childId/locations", requireAuth, async (req, res, next) => {
   try {
     const { childId } = req.params;
