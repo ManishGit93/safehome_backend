@@ -11,42 +11,63 @@ import { recordAudit } from "../services/auditService";
 
 const router = Router();
 
-router.get("/", requireRole("parent"), async (req, res) => {
-  const parent = req.user!;
-  const links = await ParentChildLinkModel.find({ parentId: parent._id, status: "ACCEPTED" }).populate(
-    "childId",
-    "name email consentGiven",
-  );
+router.get("/", requireRole("parent"), async (req, res, next) => {
+  try {
+    const parent = req.user!;
+    const links = await ParentChildLinkModel.find({ parentId: parent._id, status: "ACCEPTED" }).populate(
+      "childId",
+      "name email consentGiven",
+    );
 
-  const childIds = links
-    .map((link) => {
-      const child = link.childId as Types.ObjectId | { _id: Types.ObjectId };
-      return child instanceof Types.ObjectId ? child : child?._id;
-    })
-    .filter(Boolean) as Types.ObjectId[];
-  const latestLocations = await LatestLocationModel.find({ userId: { $in: childIds } });
-  const locationMap = new Map(latestLocations.map((loc) => [loc.userId.toString(), loc]));
+    // Filter out links where child doesn't exist (deleted users)
+    const validLinks = links.filter((link) => {
+      const child = link.childId;
+      return child !== null && child !== undefined;
+    });
 
-  const children = links.map((link) => {
-    const child = link.childId as any;
-    const loc = locationMap.get(child._id.toString());
-    return {
-      id: child._id,
-      name: child.name,
-      email: child.email,
-      consentGiven: child.consentGiven,
-      lastLocation: loc
-        ? {
-            lat: loc.lat,
-            lng: loc.lng,
-            accuracy: loc.accuracy,
-            ts: loc.ts,
-          }
-        : null,
-    };
-  });
+    const childIds = validLinks
+      .map((link) => {
+        const child = link.childId as Types.ObjectId | { _id: Types.ObjectId };
+        return child instanceof Types.ObjectId ? child : child?._id;
+      })
+      .filter(Boolean) as Types.ObjectId[];
 
-  return res.json({ children });
+    // Only query locations if we have child IDs
+    const latestLocations = childIds.length > 0
+      ? await LatestLocationModel.find({ userId: { $in: childIds } })
+      : [];
+    const locationMap = new Map(latestLocations.map((loc) => [loc.userId.toString(), loc]));
+
+    const children = validLinks
+      .map((link) => {
+        const child = link.childId as any;
+        // Double check child exists
+        if (!child || !child._id) {
+          return null;
+        }
+
+        const loc = locationMap.get(child._id.toString());
+        return {
+          id: child._id,
+          name: child.name || "Unknown",
+          email: child.email || "",
+          consentGiven: child.consentGiven ?? false,
+          lastLocation: loc
+            ? {
+                lat: loc.lat,
+                lng: loc.lng,
+                accuracy: loc.accuracy,
+                ts: loc.ts,
+              }
+            : null,
+        };
+      })
+      .filter(Boolean); // Remove any null entries
+
+    return res.json({ children });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 const historySchema = z.object({
