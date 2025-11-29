@@ -10,6 +10,7 @@ import { LocationPingModel } from "../models/LocationPing";
 import { LatestLocationModel } from "../models/LatestLocation";
 import { AuditLogModel } from "../models/AuditLog";
 import { recordAudit } from "../services/auditService";
+import { saveLocationPing } from "../services/locationService";
 
 const router = Router();
 
@@ -124,6 +125,53 @@ router.post("/export", requireRole("child"), async (req, res, next) => {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="safehome-${user._id}.json"`);
     return res.send(JSON.stringify(payload, null, 2));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+const locationUpdateSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  accuracy: z.number().optional(),
+  speed: z.number().optional(),
+  heading: z.number().optional(),
+});
+
+router.post("/location", requireRole("child"), async (req, res, next) => {
+  try {
+    const user = req.user!;
+    
+    if (!user.consentGiven) {
+      throw createHttpError(403, "Consent required before sending location");
+    }
+
+    const data = locationUpdateSchema.parse(req.body);
+    const now = new Date();
+
+    await saveLocationPing({
+      userId: user._id,
+      lat: data.lat,
+      lng: data.lng,
+      accuracy: data.accuracy,
+      speed: data.speed,
+      heading: data.heading,
+      ts: now,
+    });
+
+    await recordAudit({
+      actorId: user._id,
+      actorRole: user.role,
+      childId: user._id,
+      action: "LOCATION_UPDATE",
+      meta: { lat: data.lat, lng: data.lng },
+    });
+
+    return res.json({ 
+      ok: true, 
+      message: "Location updated successfully",
+      timestamp: now 
+    });
   } catch (error) {
     return next(error);
   }
